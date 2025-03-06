@@ -191,10 +191,44 @@ index 7b8257bb..1dbd9053 100644
  #ifdef CASS_USE_LIBSSH2
    /**
 diff --git a/tests/src/integration/integration.cpp b/tests/src/integration/integration.cpp
-index 489680c5..3818b4ab 100644
+index 489680c5..4750fd4f 100644
 --- a/tests/src/integration/integration.cpp
 +++ b/tests/src/integration/integration.cpp
-@@ -155,7 +155,7 @@ void Integration::SetUp() {
+@@ -28,7 +28,7 @@
+ 
+ #define FORMAT_BUFFER_SIZE 10240
+ #define ENTITY_MAXIMUM_LENGTH 48
+-#define SIMPLE_KEYSPACE_FORMAT "CREATE KEYSPACE IF NOT EXISTS %s WITH replication = %s"
++#define SIMPLE_KEYSPACE_FORMAT "CREATE KEYSPACE IF NOT EXISTS %s WITH replication = %s %s"
+ #define REPLICATION_STRATEGY "{ 'class': %s }"
+ #define SELECT_SERVER_VERSION "SELECT release_version FROM system.local"
+ #define LOGGER_MAXIMUM_WAIT_TIME_MS 10000u
+@@ -65,6 +65,7 @@ Integration::Integration()
+     , is_session_requested_(true)
+     , is_keyspace_change_requested_(true)
+     , is_test_chaotic_(false)
++    , disable_tablets_(false)
+     , protocol_version_(CASS_PROTOCOL_VERSION_V4)
+     , create_keyspace_query_("")
+     , start_time_(0ull) {
+@@ -137,9 +138,15 @@ void Integration::SetUp() {
+   }
+   replication_strategy_ = default_replication_strategy();
+ 
++  std::string maybe_disable_tablets;
++  if (Options::is_scylla() && disable_tablets_) {
++    maybe_disable_tablets = "AND tablets = { 'enabled': false }";
++  }
++
+   // Generate the keyspace query
+   create_keyspace_query_ =
+-      format_string(SIMPLE_KEYSPACE_FORMAT, keyspace_name_.c_str(), replication_strategy_.c_str());
++      format_string(SIMPLE_KEYSPACE_FORMAT, keyspace_name_.c_str(),
++                    replication_strategy_.c_str(), maybe_disable_tablets.c_str());
+ 
+   // Create the data center nodes vector
+   std::vector<unsigned short> data_center_nodes;
+@@ -155,7 +162,7 @@ void Integration::SetUp() {
            Options::dse_credentials(), Options::dse_username(), Options::dse_password(),
            Options::deployment_type(), Options::authentication_type(), Options::host(),
            Options::port(), Options::username(), Options::password(), Options::public_key(),
@@ -203,6 +237,24 @@ index 489680c5..3818b4ab 100644
        if (ccm_->create_cluster(data_center_nodes, is_with_vnodes_, is_password_authenticator_,
                                 is_ssl_, is_client_authentication_)) {
          if (is_ccm_start_requested_) {
+diff --git a/tests/src/integration/integration.hpp b/tests/src/integration/integration.hpp
+index c6f5d430..a64b08f1 100644
+--- a/tests/src/integration/integration.hpp
++++ b/tests/src/integration/integration.hpp
+@@ -349,6 +349,13 @@ protected:
+    * destroyed
+    */
+   bool is_test_chaotic_;
++  /**
++   * Flag to indicate if tablets should be disabled for Scylla keyspace.
++   * There are some cases where the test logic will fail for tablets keyspace
++   * (e.g. when test uses LWT statements).
++   * (DEFAULT: false)
++   */
++  bool disable_tablets_;
+   /**
+    * Workload to apply to the cluster
+    */
 diff --git a/tests/src/integration/options.cpp b/tests/src/integration/options.cpp
 index fd5a19de..f14490a5 100644
 --- a/tests/src/integration/options.cpp
@@ -305,3 +357,20 @@ index 2b8a49aa..39ed5170 100644
  
    /**
     * Hidden default constructor
+diff --git a/tests/src/integration/tests/test_exec_profile.cpp b/tests/src/integration/tests/test_exec_profile.cpp
+index 05ca2500..96072cb6 100644
+--- a/tests/src/integration/tests/test_exec_profile.cpp
++++ b/tests/src/integration/tests/test_exec_profile.cpp
+@@ -182,7 +182,11 @@ private:
+  */
+ class DCExecutionProfileTest : public ExecutionProfileTest {
+ public:
+-  DCExecutionProfileTest() { number_dc2_nodes_ = 1; }
++  DCExecutionProfileTest() {
++    number_dc2_nodes_ = 1;
++    // Disable the use of tablets for this test, since LWT statements are used.
++    disable_tablets_ = true;
++  }
+ 
+   void SetUp() {
+     // Create the execution profiles for the test cases
